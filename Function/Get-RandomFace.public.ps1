@@ -1,0 +1,86 @@
+function Get-RandomFace {
+    [CmdletBinding()]
+    param(
+        [parameter(HelpMessage="Select Path for outputfile. additional files will have numbers appended to the filename")]
+        [System.IO.FileInfo]$OutputFile,
+
+        [ValidateRange(1,999)]
+        [Int]$Amount = 1,
+
+        [ValidateRange(0,9)]
+        [Int]$WaitMultiplier = 2
+    )    
+
+    begin{
+        write-verbose $OutputFile.FullName
+        $Extension = $OutputFile.Extension
+        $BaseName = $OutputFile.name.Replace($Extension,"")
+        if($Extension -notin $(".Jpg",".Jpeg"))
+        {
+            throw "Outputfile needs to be .Jpeg or .jpg"
+        }
+
+        Write-verbose "Directory: $($OutputFile.directory)"
+
+        #Create and open runspace pool, setup runspaces array with min and max threads
+        $pool = [RunspaceFactory]::CreateRunspacePool(1, [int]$env:NUMBER_OF_PROCESSORS+1)
+        $pool.ApartmentState = "MTA"
+        $pool.Open()
+        $runspaces = @()
+        
+
+    }
+
+    process {
+
+
+        #Create array of webrequests
+        foreach($item in @(0..($Amount-1)))
+        {
+            #Add Content to Runspace
+            $runspace = [PowerShell]::Create()
+            [void]$runspace.AddScript({param([int]$Seconds)start-sleep -Seconds $($item); invoke-webrequest "https://thispersondoesnotexist.com/image"})
+            [void]$runspace.AddArgument($item*$WaitMultiplier)
+            $runspace.RunspacePool = $pool
+            $runspaces += [PSCustomObject]@{ Pipe = $runspace; Status = $runspace.BeginInvoke();Processed=$false }
+        }
+
+        #While there is still items to be processed
+        Write-Verbose "Receiving Webcontent and writing to file"
+        while ($runspaces.Processed -contains $false) {
+            #Get items that are finished running and still not processed
+            foreach ($RS in ($runspaces|?{$_.Status.IsCompleted -and !$_.Processed})) {
+
+                # EndInvoke method retrieves the results of the asynchronous call
+                $WebResponse = $RS.Pipe.EndInvoke($RS.Status)
+
+                #Convert Bitarray to Image
+                $Image = $([System.Drawing.Image]::FromStream([System.IO.MemoryStream]::new($WebResponse.content)))
+                
+                #Figure out fileame for export. if filename is taken add filename1,filename2 etc untill it find one that doesent exist
+                $TestFile = [System.IO.FileInfo]$OutputFile.FullName
+                $TestInt = 1
+                while($TestFile.exists)
+                {
+                    $Newname = "$BaseName$testint$Extension"
+                    $Testfile = [System.IO.FileInfo]$(join-path $OutputFile.Directory $Newname)
+                    $TestInt++
+                }
+
+                #Save the file
+                Write-verbose "Saving image to $($Testfile.fullname)"
+                $Image.save($Testfile.fullname)
+
+                #Set processed and dispose current RS
+                $RS.Processed = $true
+                $RS.Pipe.Dispose()
+            }
+        }
+    }
+    end{
+        #Cleanup
+        $pool.Close() 
+        $pool.Dispose()
+    }
+
+}
