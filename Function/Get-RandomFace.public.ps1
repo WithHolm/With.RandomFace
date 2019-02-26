@@ -1,3 +1,27 @@
+<#
+.SYNOPSIS
+Short description
+
+.DESCRIPTION
+Long description
+
+.PARAMETER OutputFile
+Path to jpeg file. can be ".jpeg" or ".jpg". if file already exist it will append int to the end of the file
+
+.PARAMETER Amount
+How many pictures do you want?
+
+.PARAMETER WaitMultiplier
+To test out the ratelimit for the site
+
+.EXAMPLE
+Get-RandomFace -OutputFile "Path\Picture.jpg"
+
+.NOTES
+General notes
+#>
+
+
 function Get-RandomFace {
     [CmdletBinding()]
     param(
@@ -12,7 +36,15 @@ function Get-RandomFace {
     )    
 
     begin{
-        write-verbose $OutputFile.FullName
+        
+        if(!$OutputFile.Directory.Exists)
+        {
+            Write-verbose "Parent directory does not exsist.. creating"
+            new-item -Path $OutputFile.Directory.FullName -ItemType Directory -Force|Out-Null
+        }
+
+        write-verbose "Saving images to  $($OutputFile.Directory.FullName)"
+
         $Extension = $OutputFile.Extension
         $BaseName = $OutputFile.name.Replace($Extension,"")
         if($Extension -notin $(".Jpg",".Jpeg"))
@@ -34,13 +66,17 @@ function Get-RandomFace {
     process {
 
 
-        #Create array of webrequests
+        #Insert jobs to do in runspaces
         foreach($item in @(0..($Amount-1)))
         {
             #Add Content to Runspace
             $runspace = [PowerShell]::Create()
-            [void]$runspace.AddScript({param([int]$Seconds)start-sleep -Seconds $($item); invoke-webrequest "https://thispersondoesnotexist.com/image"})
-            [void]$runspace.AddArgument($item*$WaitMultiplier)
+            [void]$runspace.AddScript({
+                param([int]$Seconds)
+                start-sleep -Seconds $($Seconds); 
+                invoke-webrequest "https://thispersondoesnotexist.com/image" -UseBasicParsing -UserAgent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/72.0.3626.96 Safari/537.36"
+            })
+            [void]$runspace.AddArgument(($item*$WaitMultiplier))
             $runspace.RunspacePool = $pool
             $runspaces += [PSCustomObject]@{ Pipe = $runspace; Status = $runspace.BeginInvoke();Processed=$false }
         }
