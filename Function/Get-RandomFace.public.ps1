@@ -32,11 +32,21 @@ function Get-RandomFace {
         [Int]$Amount = 1,
 
         [ValidateRange(0,9)]
-        [Int]$WaitMultiplier = 2
+        [Int]$WaitMultiplier = 2,
+
+        [ValidateRange(1,999)]
+        [int]$ConcurrentCalls = $([int]$env:NUMBER_OF_PROCESSORS+1),
+
+        [switch]$Passthru
     )    
 
     begin{
-        
+        #Check if site is up
+        if(!(Test-Connection -Quiet 'https://www.thispersondoesnotexist.com/'))
+        {
+            Throw "The Source website i use for this content is down :("
+        }
+
         if(!$OutputFile.Directory.Exists)
         {
             Write-verbose "Parent directory does not exsist.. creating"
@@ -55,7 +65,7 @@ function Get-RandomFace {
         Write-verbose "Directory: $($OutputFile.directory)"
 
         #Create and open runspace pool, setup runspaces array with min and max threads
-        $pool = [RunspaceFactory]::CreateRunspacePool(1, [int]$env:NUMBER_OF_PROCESSORS+1)
+        $pool = [RunspaceFactory]::CreateRunspacePool(1, $ConcurrentCalls)
         $pool.ApartmentState = "MTA"
         $pool.Open()
         $runspaces = @()
@@ -90,22 +100,32 @@ function Get-RandomFace {
                 # EndInvoke method retrieves the results of the asynchronous call
                 $WebResponse = $RS.Pipe.EndInvoke($RS.Status)
 
+                if(!([bool]$WebResponse))
+                {
+                    throw "Something went wrong.. :(.. i dont have any info of it in this version.. mabye later?"
+                }
                 #Convert Bitarray to Image
                 $Image = $([System.Drawing.Image]::FromStream([System.IO.MemoryStream]::new($WebResponse.content)))
                 
-                #Figure out fileame for export. if filename is taken add filename1,filename2 etc untill it find one that doesent exist
-                $TestFile = [System.IO.FileInfo]$OutputFile.FullName
-                $TestInt = 1
-                while($TestFile.exists)
+                if($Passthru)
                 {
-                    $Newname = "$BaseName$testint$Extension"
-                    $Testfile = [System.IO.FileInfo]$(join-path $OutputFile.Directory $Newname)
-                    $TestInt++
+                    Write-Output $Image
                 }
-
-                #Save the file
-                Write-verbose "Saving image to $($Testfile.fullname)"
-                $Image.save($Testfile.fullname)
+                else {
+                    #Figure out fileame for export. if filename is taken add filename1,filename2 etc untill it find one that doesent exist
+                    $TestFile = [System.IO.FileInfo]$OutputFile.FullName
+                    $TestInt = 1
+                    while($TestFile.exists)
+                    {
+                        $Newname = "$BaseName$testint$Extension"
+                        $Testfile = [System.IO.FileInfo]$(join-path $OutputFile.Directory $Newname)
+                        $TestInt++
+                    }
+    
+                    #Save the file
+                    Write-verbose "Saving image to $($Testfile.fullname)"
+                    $Image.save($Testfile.fullname)
+                }
 
                 #Set processed and dispose current RS
                 $RS.Processed = $true
