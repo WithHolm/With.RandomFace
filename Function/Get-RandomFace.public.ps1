@@ -32,21 +32,11 @@ function Get-RandomFace {
         [Int]$Amount = 1,
 
         [ValidateRange(0,9)]
-        [Int]$WaitMultiplier = 2,
-
-        [ValidateRange(1,999)]
-        [int]$ConcurrentCalls = $([int]$env:NUMBER_OF_PROCESSORS+1),
-
-        [switch]$Passthru
+        [Int]$WaitMultiplier = 2
     )    
 
     begin{
-        #Check if site is up
-        if(!(Test-Connection -Quiet 'https://www.thispersondoesnotexist.com/'))
-        {
-            Throw "The Source website i use for this content is down :("
-        }
-
+        $void = [System.Reflection.Assembly]::LoadWithPartialName("System.Drawing")
         if(!$OutputFile.Directory.Exists)
         {
             Write-verbose "Parent directory does not exsist.. creating"
@@ -65,7 +55,7 @@ function Get-RandomFace {
         Write-verbose "Directory: $($OutputFile.directory)"
 
         #Create and open runspace pool, setup runspaces array with min and max threads
-        $pool = [RunspaceFactory]::CreateRunspacePool(1, $ConcurrentCalls)
+        $pool = [RunspaceFactory]::CreateRunspacePool(1, [int]$env:NUMBER_OF_PROCESSORS+1)
         $pool.ApartmentState = "MTA"
         $pool.Open()
         $runspaces = @()
@@ -92,7 +82,8 @@ function Get-RandomFace {
         }
 
         #While there is still items to be processed
-        Write-Verbose "Receiving Webcontent and writing to file"
+        $Totalcount = @($runspaces).count
+        Write-Verbose "Receiving Webcontent and writing to file ($Totalcount calls)"
         while ($runspaces.Processed -contains $false) {
             #Get items that are finished running and still not processed
             foreach ($RS in ($runspaces|?{$_.Status.IsCompleted -and !$_.Processed})) {
@@ -100,32 +91,23 @@ function Get-RandomFace {
                 # EndInvoke method retrieves the results of the asynchronous call
                 $WebResponse = $RS.Pipe.EndInvoke($RS.Status)
 
-                if(!([bool]$WebResponse))
-                {
-                    throw "Something went wrong.. :(.. i dont have any info of it in this version.. mabye later?"
-                }
                 #Convert Bitarray to Image
                 $Image = $([System.Drawing.Image]::FromStream([System.IO.MemoryStream]::new($WebResponse.content)))
                 
-                if($Passthru)
+                #Figure out fileame for export. if filename is taken add filename1,filename2 etc untill it find one that doesent exist
+                $TestFile = [System.IO.FileInfo]$OutputFile.FullName
+                $TestInt = 1
+                while($TestFile.exists)
                 {
-                    Write-Output $Image
+                    $Newname = "$BaseName$testint$Extension"
+                    $Testfile = [System.IO.FileInfo]$(join-path $OutputFile.Directory $Newname)
+                    $TestInt++
                 }
-                else {
-                    #Figure out fileame for export. if filename is taken add filename1,filename2 etc untill it find one that doesent exist
-                    $TestFile = [System.IO.FileInfo]$OutputFile.FullName
-                    $TestInt = 1
-                    while($TestFile.exists)
-                    {
-                        $Newname = "$BaseName$testint$Extension"
-                        $Testfile = [System.IO.FileInfo]$(join-path $OutputFile.Directory $Newname)
-                        $TestInt++
-                    }
-    
-                    #Save the file
-                    Write-verbose "Saving image to $($Testfile.fullname)"
-                    $Image.save($Testfile.fullname)
-                }
+
+                #Save the file
+                $Completedcount = @($runspaces|?{$_.Status.IsCompleted -and $_.Processed}).count +1
+                Write-verbose "Saving image to $($Testfile.fullname) ($($Completedcount.ToString().PadLeft($Totalcount.tostring().Length,"0"))/$Totalcount)"
+                $Image.save($Testfile.fullname)
 
                 #Set processed and dispose current RS
                 $RS.Processed = $true
@@ -138,5 +120,4 @@ function Get-RandomFace {
         $pool.Close() 
         $pool.Dispose()
     }
-
 }
